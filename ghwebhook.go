@@ -1,9 +1,11 @@
 package ghwebhook
 
 import (
+	"errors"
 	"io/ioutil"
 	"mime"
 	"net/http"
+	"net/url"
 
 	"github.com/google/go-github/github"
 )
@@ -57,18 +59,29 @@ func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var payload []byte
 	switch t {
 	case "application/x-www-form-urlencoded":
-		payload = []byte(r.PostFormValue("payload"))
+		if h.Secret != "" {
+			payload, err = github.ValidatePayload(r, []byte(h.Secret))
+			if err != nil {
+				break
+			}
+			values, err := url.ParseQuery(string(payload))
+			if err != nil {
+				break
+			}
+			payload = []byte(values.Get("payload"))
+		} else {
+			payload = []byte(r.PostFormValue("payload"))
+		}
 	case "application/json":
 		if h.Secret != "" {
 			payload, err = github.ValidatePayload(r, []byte(h.Secret))
 		} else {
 			payload, err = ioutil.ReadAll(r.Body)
 		}
-		if err != nil {
-			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
-			return
-		}
 	default:
+		err = errors.New("unsupported content type")
+	}
+	if err != nil {
 		http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 		return
 	}
