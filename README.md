@@ -15,14 +15,14 @@ import (
 
 func main() {
 	h := &ghwebhook.Webhook{
-    // recommend to set secret
+		// recommend to set secret
 		Secret:       "very-secret-string",
 
-    // Restrict IP address
-    RestrictAddr: true,
+		// Restrict IP address
+		RestrictAddr: true,
 		TrustAddrs:   []string{"::1/128", "127.0.0.0/8"},
 
-    Ping: func(e *github.PingEvent) {
+		Ping: func(e *github.PingEvent) {
 			log.Printf("%#v", e)
 		},
 	}
