@@ -1,17 +1,32 @@
 package ghwebhook
 
 import (
+	"context"
 	"errors"
 	"io/ioutil"
 	"mime"
+	"net"
 	"net/http"
 	"net/url"
+	"strings"
+	"sync"
+	"time"
 
 	"github.com/google/go-github/github"
 )
 
+// Webhook is a receiver for github webhook.
 type Webhook struct {
-	Secret                   string
+	// Secret is Secret in Github Settings/Webhooks/Manage webhook
+	Secret string
+
+	// RestrictAddr enables restrict Service Hook IP Addresses
+	// https://help.github.com/articles/github-s-ip-addresses/
+	RestrictAddr bool
+
+	// TrustAddrs is the list of trusted IP address (e.g. reverse proxies)
+	TrustAddrs []string
+
 	CommitComment            func(e *github.CommitCommentEvent)
 	Create                   func(e *github.CreateEvent)
 	Delete                   func(e *github.DeleteEvent)
@@ -45,9 +60,25 @@ type Webhook struct {
 	Team                     func(e *github.TeamEvent)
 	TeamAdd                  func(e *github.TeamAddEvent)
 	Watch                    func(e *github.WatchEvent)
+
+	mu         sync.RWMutex
+	client     *github.Client
+	trustAddrs []*net.IPNet
+	expiresAt  time.Time
 }
 
 func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
+	if h.RestrictAddr {
+		if err := h.updateTrustAddrs(r.Context()); err != nil {
+			http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
+			return
+		}
+		if err := h.validateAddr(r); err != nil {
+			http.Error(w, http.StatusText(http.StatusForbidden), http.StatusForbidden)
+			return
+		}
+	}
+
 	if r.Method != "POST" {
 		http.Error(w, http.StatusText(http.StatusMethodNotAllowed), http.StatusMethodNotAllowed)
 	}
@@ -230,4 +261,77 @@ func (h *Webhook) handle(e interface{}) {
 			h.Watch(e)
 		}
 	}
+}
+
+func (h *Webhook) validateAddr(r *http.Request) error {
+	h.mu.RLock()
+	defer h.mu.RUnlock()
+
+	// validate X-Forwarded-For Header
+	forwarded := strings.Split(r.Header.Get("X-Forwarded-For"), ",")
+	for _, forwardedIP := range forwarded {
+		ip := net.ParseIP(strings.TrimSpace(forwardedIP))
+		if err := h.validateIP(ip); err != nil {
+			return err
+		}
+	}
+
+	// validate RemoteAddr
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return err
+	}
+	ip := net.ParseIP(host)
+	if err := h.validateIP(ip); err != nil {
+		return err
+	}
+
+	return nil
+}
+
+func (h *Webhook) validateIP(ip net.IP) error {
+	for _, addr := range h.trustAddrs {
+		if addr.Contains(ip) {
+			return nil
+		}
+	}
+	return errors.New("untrusted ip")
+}
+
+func (h *Webhook) updateTrustAddrs(ctx context.Context) error {
+	if h.trustAddrs != nil && h.expiresAt.Before(time.Now()) {
+		return nil
+	}
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	if !h.expiresAt.Before(time.Now()) {
+		return nil // updated TrustAddrs by another groutine
+	}
+
+	trustAddrs := make([]*net.IPNet, 0, len(h.TrustAddrs)+2)
+	for _, addr := range h.TrustAddrs {
+		_, ipNet, err := net.ParseCIDR(addr)
+		if err != nil {
+			return err
+		}
+		trustAddrs = append(trustAddrs, ipNet)
+	}
+
+	if h.client == nil {
+		h.client = github.NewClient(nil)
+	}
+	meta, _, err := h.client.APIMeta(ctx)
+	if err != nil {
+		return err
+	}
+	for _, addr := range meta.Hooks {
+		_, ipNet, err := net.ParseCIDR(addr)
+		if err != nil {
+			return err
+		}
+		trustAddrs = append(trustAddrs, ipNet)
+	}
+	h.trustAddrs = trustAddrs
+	h.expiresAt = time.Now().Add(24 * time.Hour)
+	return nil
 }

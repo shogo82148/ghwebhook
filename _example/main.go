@@ -10,7 +10,9 @@ import (
 
 func main() {
 	h := &ghwebhook.Webhook{
-		Secret: "very-secret-string",
+		Secret:       "very-secret-string",
+		RestrictAddr: true,
+		TrustAddrs:   []string{"::1/128", "127.0.0.0/8"},
 		Ping: func(e *github.PingEvent) {
 			log.Printf("%#v", e)
 		},
