@@ -9,7 +9,8 @@ import (
 )
 
 type Webhook struct {
-	Ping func(e *github.PingEvent)
+	Secret string
+	Ping   func(e *github.PingEvent)
 }
 
 func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -26,7 +27,11 @@ func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case "application/x-www-form-urlencoded":
 		payload = []byte(r.PostFormValue("payload"))
 	case "application/json":
-		payload, err = ioutil.ReadAll(r.Body)
+		if h.Secret != "" {
+			payload, err = github.ValidatePayload(r, []byte(h.Secret))
+		} else {
+			payload, err = ioutil.ReadAll(r.Body)
+		}
 		if err != nil {
 			http.Error(w, http.StatusText(http.StatusBadRequest), http.StatusBadRequest)
 			return

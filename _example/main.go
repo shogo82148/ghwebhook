@@ -10,6 +10,7 @@ import (
 
 func main() {
 	h := &ghwebhook.Webhook{
+		Secret: "very-secret-string",
 		Ping: func(e *github.PingEvent) {
 			log.Printf("%#v", e)
 		},
