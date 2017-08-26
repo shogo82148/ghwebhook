@@ -11,6 +11,7 @@ import (
 type Webhook struct {
 	Secret string
 	Ping   func(e *github.PingEvent)
+	Push   func(e *github.PushEvent)
 }
 
 func (h *Webhook) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -55,6 +56,10 @@ func (h *Webhook) handle(e interface{}) {
 	case *github.PingEvent:
 		if h.Ping != nil {
 			h.Ping(e)
+		}
+	case *github.PushEvent:
+		if h.Push != nil {
+			h.Push(e)
 		}
 	}
 }
